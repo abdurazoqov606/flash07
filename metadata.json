@@ -1,0 +1,6 @@
+{
+  "name": "Abdurazokhov",
+  "description": "Real-time AI hand tracking, laser gestures, and interactive neon effects by Abdurazokhov.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

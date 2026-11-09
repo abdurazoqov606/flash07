@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Handy AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--cyan:#00f0ff;--green:#39ff88}
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{
+    width:100%;height:100%;overflow:hidden;overscroll-behavior:none;
+    background-color:#000;color:#e8fffb;
+    font-family:"DM Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    background-image:
+      linear-gradient(rgba(0,240,255,.05) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(0,240,255,.05) 1px,transparent 1px);
+    background-size:60px 60px;
+  }
+  canvas#stage{position:fixed;inset:0;width:100%;height:100%;display:block}
+  video#cam{position:fixed;width:2px;height:2px;opacity:.01;pointer-events:none;left:0;top:0}
+
+  /* static film grain (no animation, no blend mode = cheap) */
+  .grain{
+    position:fixed;inset:0;pointer-events:none;z-index:50;opacity:.07;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+  .vignette{
+    position:fixed;inset:0;pointer-events:none;z-index:40;
+    background:radial-gradient(ellipse at center,transparent 50%,rgba(0,0,0,.7) 100%);
+  }
+
+  .brand{
+    position:fixed;top:calc(env(safe-area-inset-top,0px) + 22px);left:24px;z-index:60;
+    font-size:28px;font-weight:500;letter-spacing:.08em;color:#eaffff;
+    text-shadow:0 0 6px var(--cyan),0 0 20px var(--cyan),0 0 44px rgba(0,240,255,.6);
+  }
+  .brand small{display:block;font-size:9px;font-weight:300;letter-spacing:.35em;opacity:.6;margin-top:4px;text-shadow:none;color:var(--green)}
+
+  .panel{
+    position:fixed;top:50%;transform:translateY(-50%);z-index:60;
+    padding:18px 20px;min-width:200px;
+    background:rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.15);
+    border-radius:16px;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);
+    font-size:12px;letter-spacing:.06em;
+  }
+  /* blur only on desktop: it's the #1 cause of iPhone lag over a live canvas */
+  @media (hover:hover) and (pointer:fine){
+    .panel{backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);background:var(--glass,rgba(255,255,255,.045))}
+  }
+  .panel.left{left:24px}
+  .panel.right{right:24px;max-width:250px}
+  .panel h3{
+    font-size:10px;font-weight:400;letter-spacing:.3em;text-transform:uppercase;
+    color:var(--cyan);opacity:.85;margin-bottom:12px;padding-bottom:9px;border-bottom:1px solid rgba(255,255,255,.1)
+  }
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin:9px 0}
+  .row span:first-child{opacity:.6;font-weight:300;text-transform:uppercase;font-size:10px;letter-spacing:.18em}
+  .row b{font-weight:500;font-size:19px;color:#fff;text-shadow:0 0 8px rgba(0,240,255,.6)}
+  .row b.status{font-size:12px;text-align:right;color:var(--green)}
+  .row b.status.err{color:#ff5577}
+  .row b.status.warn{color:#ffd166}
+  .panel ul{list-style:none}
+  .panel li{position:relative;padding-left:17px;margin:13px 0;line-height:1.5;font-size:12px;font-weight:300}
+  .panel li::before{content:"";position:absolute;left:0;top:.5em;width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+  .panel li:nth-child(2)::before{background:#ff3df2;box-shadow:0 0 8px #ff3df2}
+  .panel li:nth-child(3)::before{background:var(--green);box-shadow:0 0 8px var(--green)}
+
+  @media (max-width:760px){
+    .brand{font-size:21px;left:16px}
+    .panel{padding:10px 12px;min-width:0;font-size:10px;border-radius:12px}
+    .panel.left{left:10px;top:auto;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);transform:none}
+    .panel.right{right:10px;top:auto;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);transform:none;max-width:54vw}
+    .row{margin:6px 0;gap:10px}
+    .row b{font-size:15px}
+    .panel h3{margin-bottom:8px;padding-bottom:6px}
+    .panel li{font-size:10px;margin:7px 0}
+  }
+</style>
+</head>
+<body>
+
+<video id="cam" playsinline webkit-playsinline autoplay muted></video>
+<canvas id="stage"></canvas>
+<div class="vignette"></div>
+<div class="grain"></div>
+
+<div class="brand">Handy AI<small>REAL-TIME HAND TRACKING</small></div>
+
+<div class="panel left">
+  <h3>Telemetry</h3>
+  <div class="row"><span>Hands Detected</span><b id="hands">0</b></div>
+  <div class="row"><span>FPS</span><b id="fps">0</b></div>
+  <div class="row"><span>Device Status</span><b id="status" class="status warn">Requesting…</b></div>
+</div>
+
+<div class="panel right">
+  <h3>Instructions</h3>
+  <ul>
+    <li>Pinch index + thumb to draw</li>
+    <li>Use both hands for lightning arcs</li>
+    <li>Open hand to energize the core</li>
+  </ul>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<script>
+(() => {
+  "use strict";
+
+  const video  = document.getElementById("cam");
+  const canvas = document.getElementById("stage");
+  const ctx    = canvas.getContext("2d", { alpha: true });
+  const elHands  = document.getElementById("hands");
+  const elFps    = document.getElementById("fps");
+  const elStatus = document.getElementById("status");
+
+  const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));
+
+  /* quality level: 0 = full, 1 = reduced, 2 = minimal. Auto-drops if FPS is low. */
+  let Q = IS_MOBILE ? 1 : 0;
+  const MAX_PARTICLES = () => [260, 120, 50][Q];
+  const BRANCHES      = () => [3, 1, 0][Q];
+  const BOLT_DEPTH    = () => [6, 5, 4][Q];
+
+  let W = 0, H = 0;
+  function resize() {
+    const dpr = IS_MOBILE ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", resize);
+  window.addEventListener("orientationchange", () => setTimeout(resize, 250));
+  resize();
+
+  function setStatus(text, cls) {
+    elStatus.textContent = text;
+    elStatus.className = "status" + (cls ? " " + cls : "");
+  }
+
+  /* ---------- helpers ---------- */
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  const CONNECTIONS = [
+    [0,1],[1,2],[2,3],[3,4],
+    [0,5],[5,6],[6,7],[7,8],
+    [5,9],[9,10],[10,11],[11,12],
+    [9,13],[13,14],[14,15],[15,16],
+    [13,17],[17,18],[18,19],[19,20],[0,17]
+  ];
+  const TIPS = [4, 8, 12, 16, 20];
+
+  function toScreen(l, cv) {
+    return { x: (1 - l.x) * cv.vw * cv.s + cv.ox, y: l.y * cv.vh * cv.s + cv.oy };
+  }
+
+  /* ---------- state ---------- */
+  let hands = [];
+  const strokes = [];
+  const activeStroke = [null, null];
+  const pinchState = [false, false];
+  const charge = [0, 0];
+  const particles = [];
+  const rings = [];
+
+  function spawn(x, y, n, opt = {}) {
+    for (let i = 0; i < n; i++) {
+      if (particles.length >= MAX_PARTICLES()) particles.shift();
+      const a = rand(0, Math.PI * 2), sp = rand(opt.minSp ?? 0.4, opt.maxSp ?? 3.2);
+      particles.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: 1, decay: rand(0.016, 0.034),
+        size: rand(1, opt.size ?? 2.6),
+        hue: opt.hue ?? rand(160, 200)
+      });
+    }
+  }
+
+  /* ---------- tracking results ---------- */
+  function onResults(res) {
+    const vw = video.videoWidth || 640, vh = video.videoHeight || 480;
+    const s = Math.max(W / vw, H / vh);
+    const cv = { vw, vh, s, ox: (W - vw * s) / 2, oy: (H - vh * s) / 2 };
+
+    const list = [];
+    const lms = res.multiHandLandmarks || [];
+    for (const lm of lms) {
+      const pts = lm.map(l => toScreen(l, cv));
+      const size = dist(pts[0], pts[9]) || 1;
+      const pd = dist(pts[4], pts[8]);
+      const palm = {
+        x: (pts[0].x + pts[5].x + pts[9].x + pts[13].x + pts[17].x) / 5,
+        y: (pts[0].y + pts[5].y + pts[9].y + pts[13].y + pts[17].y) / 5
+      };
+      let open = [[8,6],[12,10],[16,14],[20,18]].every(([t, p]) => dist(pts[t], pts[0]) > dist(pts[p], pts[0]) * 1.12);
+      open = open && dist(pts[4], pts[17]) > dist(pts[3], pts[17]);
+      list.push({
+        pts, size, palm, open, pinchRatio: pd / size,
+        pinchPt: { x: (pts[4].x + pts[8].x) / 2, y: (pts[4].y + pts[8].y) / 2 }
+      });
+    }
+    list.sort((a, b) => a.palm.x - b.palm.x);
+    hands = list;
+    elHands.textContent = hands.length;
+    setStatus(hands.length ? "Tracking" : "Camera active", hands.length ? "" : "warn");
+  }
+
+  /* ---------- lightning ---------- */
+  function boltPath(a, b, disp, depth) {
+    let pts = [a, b], d = disp;
+    for (let i = 0; i < depth; i++) {
+      const next = [];
+      for (let j = 0; j < pts.length - 1; j++) {
+        const p = pts[j], q = pts[j + 1];
+        const dx = q.x - p.x, dy = q.y - p.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const off = (Math.random() - 0.5) * d;
+        next.push(p, { x: (p.x + q.x) / 2 - dy / len * off, y: (p.y + q.y) / 2 + dx / len * off });
+      }
+      next.push(pts[pts.length - 1]);
+      pts = next; d *= 0.55;
+    }
+    return pts;
+  }
+
+  function line(pts, color, width, alpha) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.globalAlpha = alpha;
+    ctx.stroke();
+  }
+
+  function drawLightning(a, b) {
+    const d = dist(a, b);
+    const disp = clamp(d * 0.14, 14, 90);
+    const k = clamp(1.2 - d / (Math.max(W, H) * 0.9), 0.35, 1);
+    const depth = BOLT_DEPTH();
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineJoin = "round"; ctx.lineCap = "round";
+
+    const layers = [["#ff2bd6", 7, 0.3 * k], ["#00f0ff", 3.4, 0.75 * k]];
+    if (Q === 0) layers.push(["#ffe34d", 2, 0.6 * k]);
+
+    for (const [c, w, al] of layers) {
+      const main = boltPath(a, b, disp * rand(0.8, 1.2), depth);
+      line(main, c, w, al);
+      const nb = BRANCHES();
+      for (let i = 0; i < nb; i++) {
+        const s = main[(Math.random() * (main.length - 4) | 0) + 2];
+        const ang = rand(0, Math.PI * 2), len = rand(30, 110) * k;
+        line(boltPath(s, { x: s.x + Math.cos(ang) * len, y: s.y + Math.sin(ang) * len }, len * 0.5, 3), c, w * 0.5, al * 0.8);
+      }
+    }
+    line(boltPath(a, b, disp * 0.7, depth), "#ffffff", 1.4, 0.95);
+
+    ctx.globalAlpha = 1;
+    for (const p of [a, b]) {
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 40);
+      g.addColorStop(0, "rgba(255,255,255,.95)");
+      g.addColorStop(.25, "rgba(0,240,255,.5)");
+      g.addColorStop(1, "rgba(255,43,214,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 40, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+
+    if (Math.random() < 0.7) {
+      const t = Math.random();
+      spawn(a.x + (b.x - a.x) * t + rand(-18, 18), a.y + (b.y - a.y) * t + rand(-18, 18), 1, { hue: rand(280, 330), maxSp: 2.2 });
+    }
+
+    ctx.save();
+    ctx.font = '10px "DM Mono", monospace';
+    ctx.fillStyle = "rgba(200,255,255,.85)";
+    ctx.textAlign = "center";
+    ctx.fillText(`ARC ${Math.round(d)}px · ${Math.round(k * 100)}%`, (a.x + b.x) / 2, (a.y + b.y) / 2 - 18);
+    ctx.restore();
+  }
+
+  /* ---------- wireframe (batched: 3 strokes per hand instead of ~60) ---------- */
+  function drawHand(h, idx) {
+    const p = h.pts;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+
+    ctx.beginPath();
+    for (const [i, j] of CONNECTIONS) { ctx.moveTo(p[i].x, p[i].y); ctx.lineTo(p[j].x, p[j].y); }
+    ctx.strokeStyle = "rgba(0,240,255,.16)"; ctx.lineWidth = 11; ctx.globalAlpha = 1; ctx.stroke();
+    ctx.strokeStyle = "rgba(57,255,200,.95)"; ctx.lineWidth = 2.4; ctx.stroke();
+
+    // joints
+    ctx.beginPath();
+    for (let i = 0; i < 21; i++) { if (TIPS.includes(i)) continue; ctx.moveTo(p[i].x + 3, p[i].y); ctx.arc(p[i].x, p[i].y, 3, 0, 6.2832); }
+    ctx.fillStyle = "#39ff88"; ctx.fill();
+    ctx.beginPath();
+    for (const i of TIPS) { ctx.moveTo(p[i].x + 5.5, p[i].y); ctx.arc(p[i].x, p[i].y, 5.5, 0, 6.2832); }
+    ctx.fillStyle = "#ffffff"; ctx.fill();
+    ctx.beginPath();
+    for (const i of TIPS) { ctx.moveTo(p[i].x + 11, p[i].y); ctx.arc(p[i].x, p[i].y, 11, 0, 6.2832); }
+    ctx.fillStyle = "rgba(0,240,255,.18)"; ctx.fill();
+
+    // corner brackets
+    let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+    for (const q of p) { if (q.x < minX) minX = q.x; if (q.y < minY) minY = q.y; if (q.x > maxX) maxX = q.x; if (q.y > maxY) maxY = q.y; }
+    minX -= 20; minY -= 20; maxX += 20; maxY += 20;
+    const L = 14;
+    ctx.beginPath();
+    ctx.moveTo(minX, minY + L); ctx.lineTo(minX, minY); ctx.lineTo(minX + L, minY);
+    ctx.moveTo(maxX - L, minY); ctx.lineTo(maxX, minY); ctx.lineTo(maxX, minY + L);
+    ctx.moveTo(maxX, maxY - L); ctx.lineTo(maxX, maxY); ctx.lineTo(maxX - L, maxY);
+    ctx.moveTo(minX + L, maxY); ctx.lineTo(minX, maxY); ctx.lineTo(minX, maxY - L);
+    ctx.strokeStyle = "rgba(0,240,255,.75)"; ctx.lineWidth = 1.4; ctx.stroke();
+
+    ctx.font = '10px "DM Mono", monospace';
+    ctx.fillStyle = "rgba(180,255,240,.8)";
+    ctx.fillText(`HAND_${idx + 1}${h.open ? " · OPEN" : ""}${h.pinchRatio < 0.32 ? " · PINCH" : ""}`, minX, minY - 7);
+    ctx.restore();
+  }
+
+  /* ---------- draw mode ---------- */
+  function updateDrawing(now) {
+    for (let i = 0; i < 2; i++) {
+      const h = hands[i];
+      if (!h) { pinchState[i] = false; activeStroke[i] = null; continue; }
+      const was = pinchState[i];
+      const pinching = was ? h.pinchRatio < 0.45 : h.pinchRatio < 0.3;
+      pinchState[i] = pinching;
+      if (pinching) {
+        if (!was) {
+          activeStroke[i] = { pts: [], hueBase: (now / 18) % 360 };
+          strokes.push(activeStroke[i]);
+          rings.push({ x: h.pinchPt.x, y: h.pinchPt.y, r: 4, life: 1 });
+          spawn(h.pinchPt.x, h.pinchPt.y, 14, { hue: activeStroke[i].hueBase, maxSp: 4 });
+        }
+        const s = activeStroke[i];
+        const last = s.pts[s.pts.length - 1];
+        const np = { x: h.pinchPt.x, y: h.pinchPt.y, t: now };
+        if (!last || Math.hypot(np.x - last.x, np.y - last.y) > 3) {
+          if (last) { np.x = last.x * 0.35 + np.x * 0.65; np.y = last.y * 0.35 + np.y * 0.65; }
+          s.pts.push(np);
+          if (s.pts.length > 140) s.pts.shift();
+          if (Math.random() < 0.5) spawn(np.x, np.y, 1, { hue: (s.hueBase + s.pts.length * 2) % 360, maxSp: 1.2, size: 2 });
+        }
+      } else {
+        activeStroke[i] = null;
+      }
+    }
+  }
+
+  const TRAIL_LIFE = 2600;
+  function drawStrokes(now) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for (let si = strokes.length - 1; si >= 0; si--) {
+      const s = strokes[si];
+      while (s.pts.length && now - s.pts[0].t > TRAIL_LIFE) s.pts.shift();
+      if (!s.pts.length && s !== activeStroke[0] && s !== activeStroke[1]) { strokes.splice(si, 1); continue; }
+      for (let i = 1; i < s.pts.length; i++) {
+        const a = s.pts[i - 1], b = s.pts[i];
+        const age = clamp(1 - (now - b.t) / TRAIL_LIFE, 0, 1);
+        const hue = (s.hueBase + i * 2.2 + now / 40) % 360;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = `hsla(${hue},100%,60%,${age * 0.3})`;
+        ctx.lineWidth = 14 * age + 2; ctx.stroke();
+        ctx.strokeStyle = `hsla(${hue},100%,78%,${age})`;
+        ctx.lineWidth = 3.5 * age + 0.8; ctx.stroke();
+      }
+    }
+    for (let i = 0; i < 2; i++) {
+      const h = hands[i];
+      if (!h) continue;
+      const pinching = pinchState[i], pp = h.pinchPt;
+      ctx.beginPath();
+      ctx.arc(pp.x, pp.y, pinching ? 10 + Math.sin(now / 80) * 2 : 14, 0, 6.2832);
+      ctx.strokeStyle = pinching ? "rgba(255,255,255,.95)" : "rgba(0,240,255,.4)";
+      ctx.lineWidth = pinching ? 2 : 1; ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /* ---------- energy core ---------- */
+  function drawCore(h, i, now, dt) {
+    const target = h.open ? 1 : 0;
+    charge[i] += (target - charge[i]) * clamp(dt * (target ? 2.2 : 4), 0, 1);
+    const c = charge[i];
+    if (c < 0.03) return;
+    const { x, y } = h.palm;
+    const R = h.size * (0.35 + c * 0.75);
+    const t = now / 1000;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+
+    const g = ctx.createRadialGradient(x, y, 0, x, y, R * 2.4);
+    g.addColorStop(0, `rgba(255,255,255,${0.85 * c})`);
+    g.addColorStop(0.18, `rgba(57,255,200,${0.55 * c})`);
+    g.addColorStop(0.5, `rgba(0,160,255,${0.2 * c})`);
+    g.addColorStop(1, "rgba(120,0,255,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, R * 2.4, 0, 6.2832); ctx.fill();
+
+    const rings3 = Q === 2 ? 1 : (Q === 1 ? 2 : 3);
+    for (let k = 0; k < rings3; k++) {
+      const rr = R * (0.7 + k * 0.38);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(t * (k % 2 ? -1.4 : 1.1) + k);
+      ctx.setLineDash([rr * 0.35, rr * 0.18, rr * 0.05, rr * 0.18]);
+      ctx.strokeStyle = k === 1 ? `rgba(255,61,242,${0.8 * c})` : `rgba(0,240,255,${0.85 * c})`;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.setLineDash([]);
+
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(-t * 0.7);
+    ctx.beginPath();
+    for (let k = 0; k <= 6; k++) {
+      const a = (k / 6) * 6.2832, rr = R * 0.55;
+      ctx[k ? "lineTo" : "moveTo"](Math.cos(a) * rr, Math.sin(a) * rr);
+    }
+    ctx.strokeStyle = `rgba(57,255,136,${0.9 * c})`; ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.restore();
+
+    const orbs = Q === 2 ? 3 : 6;
+    for (let k = 0; k < orbs; k++) {
+      const a = t * (1.6 + k * 0.13) + k * 0.8;
+      const rr = R * (0.9 + 0.35 * Math.sin(t * 2 + k));
+      ctx.beginPath();
+      ctx.arc(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.8, 3, 0, 6.2832);
+      ctx.fillStyle = `hsla(${170 + k * 22},100%,75%,${c})`; ctx.fill();
+    }
+
+    if (c > 0.35 && Q < 2) {
+      ctx.lineJoin = "round";
+      for (const tpi of TIPS) {
+        const path = boltPath({ x, y }, h.pts[tpi], 16 * c, 3);
+        line(path, "#00f0ff", 1.8, 0.55 * c);
+      }
+    }
+
+    const pulse = 1 + Math.sin(t * 9) * 0.12;
+    const n = ctx.createRadialGradient(x, y, 0, x, y, R * 0.32 * pulse);
+    n.addColorStop(0, "#fff"); n.addColorStop(1, "rgba(0,240,255,0)");
+    ctx.globalAlpha = c; ctx.fillStyle = n;
+    ctx.beginPath(); ctx.arc(x, y, R * 0.32 * pulse, 0, 6.2832); ctx.fill();
+    ctx.restore();
+
+    if (c > 0.85 && Math.random() < 0.4) spawn(x, y, 2, { hue: rand(150, 200), maxSp: 5, minSp: 1.5 });
+  }
+
+  /* ---------- particles / rings ---------- */
+  function drawParticles() {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx; p.y += p.vy; p.vx *= 0.97; p.vy *= 0.97; p.vy += 0.015;
+      p.life -= p.decay;
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life + 0.6, 0, 6.2832);
+      ctx.fillStyle = `hsla(${p.hue},100%,70%,${p.life})`;
+      ctx.fill();
+    }
+    for (let i = rings.length - 1; i >= 0; i--) {
+      const r = rings[i];
+      r.r += 3.4; r.life -= 0.035;
+      if (r.life <= 0) { rings.splice(i, 1); continue; }
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, 6.2832);
+      ctx.strokeStyle = `rgba(0,240,255,${r.life})`; ctx.lineWidth = 2; ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /* ---------- detection scheduler: never queues frames, so the UI can't freeze ---------- */
+  let handsModel = null, running = false, busy = false, lastSend = 0;
+  const DETECT_INTERVAL = IS_MOBILE ? 40 : 28;   // ~25 fps on phone, ~35 on desktop
+
+  function maybeDetect(now) {
+    if (!running || busy || document.hidden) return;
+    if (now - lastSend < DETECT_INTERVAL) return;
+    if (video.readyState < 2) return;
+    busy = true; lastSend = now;
+    handsModel.send({ image: video })
+      .catch(e => console.error("[Handy AI] Frame error:", e))
+      .finally(() => { busy = false; });
+  }
+
+  /* ---------- render loop ---------- */
+  let lastT = performance.now(), frames = 0, fpsT = lastT, lowCount = 0;
+  function render(now) {
+    const dt = Math.min((now - lastT) / 1000, 0.1);
+    lastT = now;
+
+    maybeDetect(now);
+
+    ctx.clearRect(0, 0, W, H);
+    updateDrawing(now);
+    drawStrokes(now);
+
+    for (let i = 0; i < hands.length; i++) {
+      drawHand(hands[i], i);
+      if (i < 2) drawCore(hands[i], i, now, dt);
+    }
+    if (!hands[0]) charge[0] *= 0.9;
+    if (!hands[1]) charge[1] *= 0.9;
+
+    if (hands.length >= 2) drawLightning(hands[0].pts[8], hands[1].pts[8]);
+    drawParticles();
+
+    frames++;
+    if (now - fpsT >= 1000) {
+      const fps = Math.round(frames * 1000 / (now - fpsT));
+      elFps.textContent = fps;
+      frames = 0; fpsT = now;
+      // auto-quality: if FPS stays low, strip effects
+      if (running && fps < 22 && Q < 2) { if (++lowCount >= 2) { Q++; lowCount = 0; } }
+      else lowCount = 0;
+    }
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+
+  /* ---------- camera + MediaPipe ---------- */
+  let booting = false, camStream = null;
+
+  async function startCamera() {
+    setStatus("Requesting camera…", "warn");
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("getUserMedia unavailable (needs HTTPS or localhost)");
+      }
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 640 }, height: { ideal: 480 },
+          frameRate: { ideal: 30, max: 30 }
+        },
+        audio: false
+      });
+      video.srcObject = camStream;
+      try { await video.play(); } catch (e) { console.warn("[Handy AI] video.play() deferred:", e); }
+      await new Promise(res => { if (video.readyState >= 2) res(); else video.onloadeddata = () => res(); });
+      setStatus("Loading model…", "warn");
+      return true;
+    } catch (err) {
+      console.error("[Handy AI] Camera initialization failed:", err);
+      let msg = "Camera error · tap to retry";
+      if (err && err.name === "NotAllowedError") msg = "Permission denied · tap";
+      else if (err && err.name === "NotFoundError") msg = "No camera found";
+      else if (err && err.name === "NotReadableError") msg = "Camera busy · tap";
+      else if (!window.isSecureContext) msg = "Needs HTTPS";
+      setStatus(msg, "err");
+      return false;
+    }
+  }
+
+  async function initModel() {
+    if (typeof Hands === "undefined") {
+      console.error("[Handy AI] MediaPipe Hands failed to load from CDN.");
+      setStatus("Model load failed · tap", "err");
+      return false;
+    }
+    try {
+      if (!handsModel) {
+        handsModel = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+        handsModel.setOptions({
+          maxNumHands: 2,
+          modelComplexity: 0,            // lite model: much faster on iPhone
+          minDetectionConfidence: 0.6,
+          minTrackingConfidence: 0.5
+        });
+        handsModel.onResults(onResults);
+        await handsModel.initialize();
+      }
+      return true;
+    } catch (err) {
+      console.error("[Handy AI] Model initialization failed:", err);
+      setStatus("Model init failed · tap", "err");
+      return false;
+    }
+  }
+
+  async function boot() {
+    if (booting || running) return;
+    booting = true;
+    try {
+      if (await startCamera() && await initModel()) {
+        setStatus("Camera active", "warn");
+        running = true;
+      }
+    } finally { booting = false; }
+  }
+
+  // ask for camera right away
+  boot();
+  // iOS fallback: a tap is a user gesture, retry if something failed
+  window.addEventListener("pointerdown", () => {
+    if (!running && !booting) boot();
+    else if (running && video.paused) video.play().catch(() => {});
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && video.paused && camStream) video.play().catch(() => {});
+  });
+})();
+</script>
+</body>
+</html>
